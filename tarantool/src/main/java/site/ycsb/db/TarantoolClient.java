@@ -16,11 +16,11 @@
  */
 package site.ycsb.db;
 
+import org.tarantool.*;
 import site.ycsb.*;
-import org.tarantool.TarantoolConnection16;
-import org.tarantool.TarantoolConnection16Impl;
-import org.tarantool.TarantoolException;
 
+import java.net.InetSocketAddress;
+import java.nio.channels.SocketChannel;
 import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -37,9 +37,16 @@ public class TarantoolClient extends DB {
   private static final String DEFAULT_HOST = "localhost";
   private static final String DEFAULT_PORT = "3301";
   private static final String DEFAULT_SPACE = "1024";
+  private static final String BATCH_SIZE = "batch_size";
 
+
+  //private TarantoolConnection16 connection;
   private TarantoolConnection16 connection;
   private int spaceNo;
+  /** The number of writes in the batchedWrite. */
+  private int batchedWriteCount = 0;
+  private int batchSize;
+  private boolean isBatched = false;
 
   public void init() throws DBException {
     Properties props = getProperties();
@@ -47,15 +54,27 @@ public class TarantoolClient extends DB {
     int port = Integer.parseInt(props.getProperty(PORT_PROPERTY, DEFAULT_PORT));
     String host = props.getProperty(HOST_PROPERTY, DEFAULT_HOST);
     spaceNo = Integer.parseInt(props.getProperty(SPACE_PROPERTY, DEFAULT_SPACE));
-
+    batchSize = Integer.parseInt(props.getProperty(BATCH_SIZE, "5"));
+    isBatched = batchSize > 1;
     try {
-      this.connection = new TarantoolConnection16Impl(host, port);
+
+      if (isBatched) {
+        this.connection = new TarantoolBatchConnection16Impl(SocketChannel.open(new InetSocketAddress(host, port)));
+        ((TarantoolBatchConnection16) this.connection).begin();
+      } else {
+        this.connection = new TarantoolConnection16Impl(host, port);
+      }
+
     } catch (Exception exc) {
       throw new DBException("Can't initialize Tarantool connection", exc);
     }
   }
 
   public void cleanup() throws DBException {
+    if(isBatched) {
+      ((TarantoolBatchConnection16) this.connection).end();
+      ((TarantoolBatchConnection16) this.connection).get();
+    }
     this.connection.close();
   }
 
@@ -142,6 +161,17 @@ public class TarantoolClient extends DB {
     }
     try {
       this.connection.replace(this.spaceNo, tuple);
+
+      if(isBatched){
+        batchedWriteCount++;
+        if(batchedWriteCount > batchSize) {
+          ((TarantoolBatchConnection16) this.connection).end();
+          ((TarantoolBatchConnection16) this.connection).get();
+          ((TarantoolBatchConnection16) this.connection).begin();
+          batchedWriteCount=0;
+        }
+      }
+
     } catch (TarantoolException exc) {
       LOGGER.log(Level.SEVERE, exceptionDescription, exc);
       return Status.ERROR;
