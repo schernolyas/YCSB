@@ -17,6 +17,10 @@
 
 package site.ycsb.db.ignite;
 
+import java.util.Arrays;
+import java.util.List;
+import org.apache.ignite.spi.communication.tcp.TcpCommunicationSpi;
+import org.apache.ignite.ssl.SslContextFactory;
 import site.ycsb.ByteIterator;
 import site.ycsb.DB;
 import site.ycsb.DBException;
@@ -66,6 +70,8 @@ public abstract class IgniteAbstractClient extends DB {
   protected static IgniteCache<String, BinaryObject> cache = null;
   /** Debug flag. */
   protected static boolean debug = false;
+  protected static boolean secure = false;
+  protected static String certificatePath = null;
 
   protected static TcpDiscoveryIpFinder ipFinder = new TcpDiscoveryVmIpFinder(true);
 
@@ -91,6 +97,8 @@ public abstract class IgniteAbstractClient extends DB {
 
       try {
         debug = Boolean.parseBoolean(getProperties().getProperty("debug", "false"));
+        secure = Boolean.parseBoolean(getProperties().getProperty("secure", "false"));
+        certificatePath = getProperties().getProperty("certificatePath");
 
         IgniteConfiguration igcfg = new IgniteConfiguration();
         igcfg.setIgniteInstanceName(CLIENT_NODE_NAME);
@@ -116,23 +124,31 @@ public abstract class IgniteAbstractClient extends DB {
         TcpDiscoverySpi disco = new TcpDiscoverySpi();
 
         Collection<String> addrs = new LinkedHashSet<>();
-        addrs.add(host + ":" + ports);
+        List<String> items = Arrays.asList(host.split("\\s*,\\s*"));
+        items.forEach(s -> addrs.add(s + ":" + ports));
 
         ((TcpDiscoveryVmIpFinder) ipFinder).setAddresses(addrs);
         disco.setIpFinder(ipFinder);
 
         igcfg.setDiscoverySpi(disco);
-        igcfg.setNetworkTimeout(2000);
+        igcfg.setNetworkTimeout(5000);
+        TcpCommunicationSpi communicationSpi = new TcpCommunicationSpi();
+        communicationSpi.setUsePairedConnections(true);
+        communicationSpi.setSocketWriteTimeout(5000);
+        communicationSpi.setConnectTimeout(9000);
+        igcfg.setCommunicationSpi(communicationSpi);
         igcfg.setClientMode(true);
 
         Log4J2Logger logger = new Log4J2Logger(this.getClass().getClassLoader().getResource("log4j2.xml"));
         igcfg.setGridLogger(logger);
+        if (secure) {
+          igcfg.setSslContextFactory(createSslFactory());
+        }
 
         log.info("Start Ignite client node.");
         cluster = Ignition.start(igcfg);
 
         log.info("Activate Ignite cluster.");
-        cluster.active(true);
 
         cache = cluster.cache(DEFAULT_CACHE_NAME).withKeepBinary();
 
@@ -143,6 +159,17 @@ public abstract class IgniteAbstractClient extends DB {
         throw new DBException(e);
       }
     } // synchronized
+  }
+
+
+  private SslContextFactory createSslFactory() {
+    SslContextFactory factory = new SslContextFactory();
+
+//    factory.setKeyStoreFilePath("/home/osboxes/Documents/Sber_Ignite_SSL/sber_ignite.jks");
+    factory.setKeyStoreFilePath(certificatePath);
+    factory.setKeyStorePassword("123456".toCharArray());
+    factory.setTrustManagers(SslContextFactory.getDisabledTrustManager());
+    return factory;
   }
 
   /**
