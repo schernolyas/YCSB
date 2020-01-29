@@ -100,6 +100,17 @@ public class TarantoolClient extends DB {
   public Status read(String table, String key, Set<String> fields, Map<String, ByteIterator> result) {
     try {
       List<String> response = this.connection.select(this.spaceNo, 0, Arrays.asList(key), 0, 1, 0);
+
+      if(isBatched){
+        batchedWriteCount++;
+        if(batchedWriteCount > batchSize) {
+          ((TarantoolBatchConnection16) this.connection).end();
+          ((TarantoolBatchConnection16) this.connection).get();
+          ((TarantoolBatchConnection16) this.connection).begin();
+          batchedWriteCount=0;
+        }
+      }
+
       result = tupleConvertFilter(response, fields);
       return Status.OK;
     } catch (TarantoolException exc) {
@@ -117,6 +128,17 @@ public class TarantoolClient extends DB {
     List<List<String>> response;
     try {
       response = this.connection.select(this.spaceNo, 0, Arrays.asList(startkey), 0, recordcount, 6);
+
+      if(isBatched){
+        batchedWriteCount++;
+        if(batchedWriteCount > batchSize) {
+          ((TarantoolBatchConnection16) this.connection).end();
+          ((TarantoolBatchConnection16) this.connection).get();
+          ((TarantoolBatchConnection16) this.connection).begin();
+          batchedWriteCount=0;
+        }
+      }
+
     } catch (TarantoolException exc) {
       LOGGER.log(Level.SEVERE, "Can't select range elements", exc);
       return Status.ERROR;
@@ -136,6 +158,17 @@ public class TarantoolClient extends DB {
   public Status delete(String table, String key) {
     try {
       this.connection.delete(this.spaceNo, Collections.singletonList(key));
+
+      if(isBatched){
+        batchedWriteCount++;
+        if(batchedWriteCount > batchSize) {
+          ((TarantoolBatchConnection16) this.connection).end();
+          ((TarantoolBatchConnection16) this.connection).get();
+          ((TarantoolBatchConnection16) this.connection).begin();
+          batchedWriteCount=0;
+        }
+      }
+
     } catch (TarantoolException exc) {
       LOGGER.log(Level.SEVERE, "Can't delete element", exc);
       return Status.ERROR;
