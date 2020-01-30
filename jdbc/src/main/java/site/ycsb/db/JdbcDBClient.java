@@ -97,6 +97,8 @@ public class JdbcDBClient extends DB {
   private static final String DEFAULT_PROP = "";
   private ConcurrentMap<StatementType, PreparedStatement> cachedStatements;
   private long numRowsInBatch = 0;
+  private List<String> batchSelectKeys = Collections.synchronizedList(new ArrayList<>());
+  private long numRowsInSelectBatch = 0;
   /** DB flavor defines DB-specific syntax and behavior for the
    * particular database. Current database flavors are: {default, phoenix} */
   private DBFlavor dbFlavor;
@@ -339,16 +341,48 @@ public class JdbcDBClient extends DB {
   @Override
   public Status read(String tableName, String key, Set<String> fields, Map<String, ByteIterator> result) {
     try {
-      StatementType type = new StatementType(StatementType.Type.READ, tableName, 1, "", getShardIndexByKey(key));
-      PreparedStatement readStatement = cachedStatements.get(type);
-      if (readStatement == null) {
-        readStatement = createAndCacheReadStatement(type, key);
+//      StatementType type = new StatementType(StatementType.Type.READ, tableName, 1, "", getShardIndexByKey(key));
+//      PreparedStatement readStatement = cachedStatements.get(type);
+//      if (readStatement == null) {
+//        readStatement = createAndCacheReadStatement(type, key);
+//      }
+      //readStatement.setString(1, key);
+      ResultSet resultSet = null;
+
+      // Using the batch insert API
+      if (batchSize > 0) {
+        batchSelectKeys.add(key);
+        // Check for a sane batch size
+        if (batchSize > 0) {
+          // Commit the batch after it grows beyond the configured size
+          if (++numRowsInSelectBatch % batchSize == 0) {
+            //readStatement.setArray(1,
+            //readStatement.getConnection().createArrayOf("VARCHAR", new List[]{batchSelectKeys}));
+
+            //readStatement.setString(1, batchSelectKeys.toString().replaceAll("(user\\d+)", "'$1'"));
+            //resultSet = readStatement.executeQuery();
+            String keys = batchSelectKeys.toString().replace("[", "").replace("]", "");
+            Statement stmt = conns.get(0).createStatement();
+            resultSet  = stmt.executeQuery(
+                "SELECT * FROM usertable WHERE YCSB_KEY in ( "
+                    +  keys.replaceAll("(user\\d+)", "'$1'") + ")");
+
+
+          } else {
+            return Status.BATCHED_OK;
+          }
+        }
+
       }
-      readStatement.setString(1, key);
-      ResultSet resultSet = readStatement.executeQuery();
-      if (!resultSet.next()) {
-        resultSet.close();
+
+
+      if (resultSet==null) {
         return Status.NOT_FOUND;
+      } else {
+        if (!resultSet.next()) {
+          resultSet.close();
+          return Status.NOT_FOUND;
+        }
       }
       if (result != null && fields != null) {
         for (String field : fields) {
@@ -359,6 +393,7 @@ public class JdbcDBClient extends DB {
       resultSet.close();
       return Status.OK;
     } catch (SQLException e) {
+      e.printStackTrace();
       System.err.println("Error in processing read of table " + tableName + ": " + e);
       return Status.ERROR;
     }
