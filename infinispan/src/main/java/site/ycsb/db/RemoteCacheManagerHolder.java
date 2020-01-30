@@ -20,28 +20,46 @@ package site.ycsb.db;
 import java.util.Properties;
 
 import org.infinispan.client.hotrod.RemoteCacheManager;
+import org.infinispan.client.hotrod.configuration.ConfigurationBuilder;
+import org.infinispan.client.hotrod.impl.ConfigurationProperties;
+import org.infinispan.commons.configuration.XMLStringConfiguration;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 
 /**
  * Utility class to ensure only a single RemoteCacheManager is created.
  */
 final class RemoteCacheManagerHolder {
+  private static final Log LOGGER = LogFactory.getLog(RemoteCacheManagerHolder.class);
 
   private static volatile RemoteCacheManager cacheManager = null;
 
   private RemoteCacheManagerHolder() {
   }
 
-  static RemoteCacheManager getInstance(Properties props) {
-    RemoteCacheManager result = cacheManager;
-    if (result == null) {
-      synchronized (RemoteCacheManagerHolder.class) {
-        result = cacheManager;
-        if (result == null) {
-          result = new RemoteCacheManager(props);
-          cacheManager = new RemoteCacheManager(props);
-        }
+  static synchronized RemoteCacheManager getInstance(Properties props) {
+    String ip = props.getProperty("ip");
+    String user = props.getProperty("user");
+    String password = props.getProperty("password");
+    String cacheName = props.getProperty("cache");
+    if (cacheManager == null) {
+      LOGGER.info("=Create new instance of RemoteCacheManager=");
+      ConfigurationBuilder builder = new ConfigurationBuilder();
+      builder.addServer().host(ip).port(ConfigurationProperties.DEFAULT_HOTROD_PORT).tcpKeepAlive(true);
+      builder.security().authentication()
+          .saslMechanism("DIGEST-MD5")
+          .username(user)
+          .password(password);
+      cacheManager = new RemoteCacheManager(builder.build(true));
+      cacheManager.start();
+      LOGGER.info("=cacheManager.getActiveConnectionCount() : "+cacheManager.getActiveConnectionCount()+"=");
+      if (!cacheManager.getCacheNames().contains(cacheName)) {
+        String xml = "<infinispan><cache-container><distributed-cache name=\"" + cacheName
+            + "\"></distributed-cache></cache-container></infinispan>";
+        cacheManager.administration().createCache(cacheName, new XMLStringConfiguration(xml));
       }
+
     }
-    return result;
+    return cacheManager;
   }
 }
