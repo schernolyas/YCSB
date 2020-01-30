@@ -16,6 +16,7 @@
  */
 package site.ycsb.db;
 
+import java.util.stream.Collectors;
 import site.ycsb.DB;
 import site.ycsb.DBException;
 import site.ycsb.ByteIterator;
@@ -97,7 +98,8 @@ public class JdbcDBClient extends DB {
   private static final String DEFAULT_PROP = "";
   private ConcurrentMap<StatementType, PreparedStatement> cachedStatements;
   private long numRowsInBatch = 0;
-  private List<String> batchSelectKeys = Collections.synchronizedList(new ArrayList<>());
+//  private List<String> batchSelectKeys = Collections.synchronizedList(new ArrayList<>());
+  private ThreadLocal<Set<String>> batchSelectKeys = ThreadLocal.withInitial(()->new HashSet<String>());
   private long numRowsInSelectBatch = 0;
   /** DB flavor defines DB-specific syntax and behavior for the
    * particular database. Current database flavors are: {default, phoenix} */
@@ -341,40 +343,27 @@ public class JdbcDBClient extends DB {
   @Override
   public Status read(String tableName, String key, Set<String> fields, Map<String, ByteIterator> result) {
     try {
-//      StatementType type = new StatementType(StatementType.Type.READ, tableName, 1, "", getShardIndexByKey(key));
-//      PreparedStatement readStatement = cachedStatements.get(type);
-//      if (readStatement == null) {
-//        readStatement = createAndCacheReadStatement(type, key);
-//      }
-      //readStatement.setString(1, key);
       ResultSet resultSet = null;
 
       // Using the batch insert API
       if (batchSize > 0) {
-        batchSelectKeys.add(key);
+        batchSelectKeys.get().add(key);
         // Check for a sane batch size
         if (batchSize > 0) {
           // Commit the batch after it grows beyond the configured size
           if (++numRowsInSelectBatch % batchSize == 0) {
-            //readStatement.setArray(1,
-            //readStatement.getConnection().createArrayOf("VARCHAR", new List[]{batchSelectKeys}));
-
-            //readStatement.setString(1, batchSelectKeys.toString().replaceAll("(user\\d+)", "'$1'"));
-            //resultSet = readStatement.executeQuery();
-            String keys = batchSelectKeys.toString().replace("[", "").replace("]", "");
+            String keys = batchSelectKeys.get().stream()
+                .map(k->"'"+k+"'")
+                .collect(Collectors.joining(","));
+            batchSelectKeys.get().clear();
             Statement stmt = conns.get(0).createStatement();
             resultSet  = stmt.executeQuery(
-                "SELECT * FROM usertable WHERE YCSB_KEY in ( "
-                    +  keys.replaceAll("(user\\d+)", "'$1'") + ")");
-
-
+                "SELECT * FROM usertable WHERE YCSB_KEY in ( "+keys + ")");
           } else {
             return Status.BATCHED_OK;
           }
         }
-
       }
-
 
       if (resultSet==null) {
         return Status.NOT_FOUND;
