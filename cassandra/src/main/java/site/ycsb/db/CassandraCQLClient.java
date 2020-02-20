@@ -292,6 +292,8 @@ public class CassandraCQLClient extends DB {
       Map<String, ByteIterator> result) {
     try {
       batchSelectKeys.get().add(key);
+//      System.out.println(Thread.currentThread().getId() + " batchSize: " + batchSize
+//          + ";" + batch.size());
       boolean batchReady = (batchSelectKeys.get().size() == batchSize);
       if (batchReady) {
         Select select = QueryBuilder.select().all().from(table)
@@ -300,6 +302,7 @@ public class CassandraCQLClient extends DB {
 //        logger.info("Query: {}", select.getQueryString());
 //        System.out.println(Thread.currentThread().getId() + " Final Query: " + select.getQueryString()
 //            + ";" + batchSelectKeys.get());
+        batchSelectKeys.get().clear();
         ResultSet rs = session.execute(select);
         List<Row> resultRows = rs.all();
         if (resultRows.isEmpty()) {
@@ -316,7 +319,7 @@ public class CassandraCQLClient extends DB {
             result.put(def.getName(), null);
           }
         }
-        batchSelectKeys.get().clear();
+
         return Status.OK;
       } else {
         return Status.BATCHED_OK;
