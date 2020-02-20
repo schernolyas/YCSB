@@ -1,17 +1,14 @@
 /**
  * Copyright (c) 2013-2015 YCSB contributors. All rights reserved.
  *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not
- * use this file except in compliance with the License. You may obtain a copy of
- * the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
- * License for the specific language governing permissions and limitations under
- * the License. See accompanying LICENSE file.
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License. See accompanying LICENSE file.
  *
  * Submitted by Chrisjan Matser on 10/11/2010.
  */
@@ -83,8 +80,8 @@ public class CassandraCQLClient extends DB {
   private static AtomicReference<PreparedStatement> deleteStmt =
       new AtomicReference<PreparedStatement>();
 
-  private ThreadLocal<List<String>> batchSelectKeys = ThreadLocal.withInitial(()->new ArrayList<String>());
-  private int batchSize=1;
+  private ThreadLocal<List<String>> batchSelectKeys = ThreadLocal.withInitial(() -> new ArrayList<String>());
+  private static int batchSize = 1;
 
   private static ConsistencyLevel readConsistencyLevel = ConsistencyLevel.ONE;
   private static ConsistencyLevel writeConsistencyLevel = ConsistencyLevel.ONE;
@@ -131,7 +128,7 @@ public class CassandraCQLClient extends DB {
   private static boolean debug = false;
 
   private static boolean trace = false;
-  
+
   /**
    * Initialize any state for this DB. Called once per DB instance; there is one
    * DB instance per client thread.
@@ -168,9 +165,9 @@ public class CassandraCQLClient extends DB {
 
         String username = getProperties().getProperty(USERNAME_PROPERTY);
         String password = getProperties().getProperty(PASSWORD_PROPERTY);
-        this.batchSize = getIntProperty(getProperties(), BATCH_PROPERTY);
-        if (this.batchSize ==-1) {
-          this.batchSize = 1;
+        int bs = getIntProperty(getProperties(), BATCH_PROPERTY);
+        if (bs != -1) {
+          batchSize = bs;
         }
 
         String keyspace = getProperties().getProperty(KEYSPACE_PROPERTY,
@@ -191,7 +188,7 @@ public class CassandraCQLClient extends DB {
               .withPort(Integer.valueOf(port)).addContactPoints(hosts);
           if (useSSL) {
             clusterBuilder = clusterBuilder.withSSL();
-          } 
+          }
           cluster = clusterBuilder.build();
         } else {
           cluster = Cluster.builder().withPort(Integer.valueOf(port))
@@ -203,7 +200,7 @@ public class CassandraCQLClient extends DB {
         if (maxConnections != null) {
           cluster.getConfiguration().getPoolingOptions()
               .setMaxConnectionsPerHost(HostDistance.LOCAL,
-              Integer.valueOf(maxConnections));
+                  Integer.valueOf(maxConnections));
         }
 
         String coreConnections = getProperties().getProperty(
@@ -211,7 +208,7 @@ public class CassandraCQLClient extends DB {
         if (coreConnections != null) {
           cluster.getConfiguration().getPoolingOptions()
               .setCoreConnectionsPerHost(HostDistance.LOCAL,
-              Integer.valueOf(coreConnections));
+                  Integer.valueOf(coreConnections));
         }
 
         String connectTimoutMillis = getProperties().getProperty(
@@ -289,51 +286,41 @@ public class CassandraCQLClient extends DB {
    *          A HashMap of field/value pairs for the result
    * @return Zero on success, a non-zero error code on error
    */
+  @SuppressWarnings("checkstyle:WhitespaceAfter")
   @Override
   public Status read(String table, String key, Set<String> fields,
       Map<String, ByteIterator> result) {
     try {
       batchSelectKeys.get().add(key);
-      boolean batchReady = (batchSelectKeys.get().size()==this.batchSize);
-      Select select = null;
+      boolean batchReady = (batchSelectKeys.get().size() == batchSize);
       if (batchReady) {
-        Select.Builder selectBuilder;
+        Select select = QueryBuilder.select().all().from(table)
+            .where(QueryBuilder.in(YCSB_KEY, batchSelectKeys.get()))
+            .limit(batchSize);
+//        logger.info("Query: {}", select.getQueryString());
+//        System.out.println(Thread.currentThread().getId() + " Final Query: " + select.getQueryString()
+//            + ";" + batchSelectKeys.get());
+        ResultSet rs = session.execute(select);
+        List<Row> resultRows = rs.all();
+        if (resultRows.isEmpty()) {
+          return Status.NOT_FOUND;
+        }
+//        resultRows.forEach(row -> System.out.println(row.toString()));
 
-        if (fields == null) {
-          selectBuilder = QueryBuilder.select().all();
-        } else {
-          selectBuilder = QueryBuilder.select();
-          for (String col : fields) {
-            ((Select.Selection) selectBuilder).column(col);
+        Row firstRow = resultRows.get(0);
+        for (ColumnDefinitions.Definition def : firstRow.getColumnDefinitions()) {
+          ByteBuffer val = firstRow.getBytesUnsafe(def.getName());
+          if (val != null) {
+            result.put(def.getName(), new ByteArrayByteIterator(val.array()));
+          } else {
+            result.put(def.getName(), null);
           }
         }
-        select = selectBuilder.from(table)
-            .where(QueryBuilder.in(YCSB_KEY, batchSelectKeys.get()))
-            .limit(batchSelectKeys.get().size());
         batchSelectKeys.get().clear();
-      }  else {
+        return Status.OK;
+      } else {
         return Status.BATCHED_OK;
       }
-      logger.debug(select.getQueryString());
-      logger.debug("key = {}", key);
-      ResultSet rs = session.execute(select);
-
-      if (rs.isExhausted()) {
-        return Status.NOT_FOUND;
-      }
-
-      Row row = rs.all().get(0);
-      for (ColumnDefinitions.Definition def : row.getColumnDefinitions()) {
-        ByteBuffer val = row.getBytesUnsafe(def.getName());
-        if (val != null) {
-          result.put(def.getName(), new ByteArrayByteIterator(val.array()));
-        } else {
-          result.put(def.getName(), null);
-        }
-      }
-
-      return Status.OK;
-
     } catch (Exception e) {
       logger.error(MessageFormatter.format("Error reading key: {}", key).getMessage(), e);
       return Status.ERROR;
@@ -404,8 +391,8 @@ public class CassandraCQLClient extends DB {
         }
 
         PreparedStatement prevStmt = (fields == null) ?
-                                     scanAllStmt.getAndSet(stmt) :
-                                     scanStmts.putIfAbsent(new HashSet(fields), stmt);
+            scanAllStmt.getAndSet(stmt) :
+            scanStmts.putIfAbsent(new HashSet(fields), stmt);
         if (prevStmt != null) {
           stmt = prevStmt;
         }
@@ -606,7 +593,7 @@ public class CassandraCQLClient extends DB {
       // Prepare statement on demand
       if (stmt == null) {
         stmt = session.prepare(QueryBuilder.delete().from(table)
-                               .where(QueryBuilder.eq(YCSB_KEY, QueryBuilder.bindMarker())));
+            .where(QueryBuilder.eq(YCSB_KEY, QueryBuilder.bindMarker())));
         stmt.setConsistencyLevel(writeConsistencyLevel);
         if (trace) {
           stmt.enableTracing();
@@ -630,6 +617,7 @@ public class CassandraCQLClient extends DB {
 
     return Status.ERROR;
   }
+
   private static int getIntProperty(Properties props, String key) throws DBException {
     String valueStr = props.getProperty(key);
     if (valueStr != null) {
