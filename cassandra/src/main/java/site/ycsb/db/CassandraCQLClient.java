@@ -33,6 +33,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -42,6 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.helpers.MessageFormatter;
@@ -292,16 +294,11 @@ public class CassandraCQLClient extends DB {
       Map<String, ByteIterator> result) {
     try {
       batchSelectKeys.get().add(key);
-//      System.out.println(Thread.currentThread().getId() + " batchSize: " + batchSize
-//          + ";" + batch.size());
       boolean batchReady = (batchSelectKeys.get().size() == batchSize);
       if (batchReady) {
         Select select = QueryBuilder.select().all().from(table)
             .where(QueryBuilder.in(YCSB_KEY, batchSelectKeys.get()))
             .limit(batchSize);
-//        logger.info("Query: {}", select.getQueryString());
-//        System.out.println(Thread.currentThread().getId() + " Final Query: " + select.getQueryString()
-//            + ";" + batchSelectKeys.get());
         batchSelectKeys.get().clear();
         ResultSet rs = session.execute(select);
         List<Row> resultRows = rs.all();
@@ -520,62 +517,61 @@ public class CassandraCQLClient extends DB {
    *          A HashMap of field/value pairs to insert in the record
    * @return Zero on success, a non-zero error code on error
    */
+
+  private ThreadLocal<List<StoreTupe>> store = ThreadLocal.withInitial(() -> new LinkedList<>());
+
+  class StoreTupe {
+
+    private String key;
+    private Map<String, ByteIterator> values;
+
+    public StoreTupe(String key, Map<String, ByteIterator> values) {
+      this.key = key;
+      this.values = values;
+    }
+  }
+
+
   @Override
   public Status insert(String table, String key, Map<String, ByteIterator> values) {
-
     try {
-      Set<String> fields = values.keySet();
-      PreparedStatement stmt = insertStmts.get(fields);
+      store.get().add(new StoreTupe(key, values));
+      boolean batchReady = (store.get().size() == batchSize);
+      if (batchReady) {
+        StringBuffer stringBuffer = new StringBuffer(10_000);
+        stringBuffer.append("BEGIN BATCH ");
+        stringBuffer.append(store.get().stream()
+            .map((storeTupe -> getInsert(table, storeTupe)))
+            .map(insert -> insert.toString())
+            .filter(str -> str.trim().length() > 0)
+            .collect(Collectors.joining(" ")));
+        stringBuffer.append(" APPLY BATCH");
 
-      // Prepare statement on demand
-      if (stmt == null) {
-        Insert insertStmt = QueryBuilder.insertInto(table);
-
-        // Add key
-        insertStmt.value(YCSB_KEY, QueryBuilder.bindMarker());
-
-        // Add fields
-        for (String field : fields) {
-          insertStmt.value(field, QueryBuilder.bindMarker());
-        }
-
-        stmt = session.prepare(insertStmt);
-        stmt.setConsistencyLevel(writeConsistencyLevel);
-        if (trace) {
-          stmt.enableTracing();
-        }
-
-        PreparedStatement prevStmt = insertStmts.putIfAbsent(new HashSet(fields), stmt);
-        if (prevStmt != null) {
-          stmt = prevStmt;
-        }
+//        System.out.println(stringBuffer.toString());
+        session.execute(stringBuffer.toString());
+        store.get().clear();
+      } else {
+        return Status.BATCHED_OK;
       }
-
-      if (logger.isDebugEnabled()) {
-        logger.debug(stmt.getQueryString());
-        logger.debug("key = {}", key);
-        for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
-          logger.debug("{} = {}", entry.getKey(), entry.getValue());
-        }
-      }
-
-      // Add key
-      BoundStatement boundStmt = stmt.bind().setString(0, key);
-
-      // Add fields
-      ColumnDefinitions vars = stmt.getVariables();
-      for (int i = 1; i < vars.size(); i++) {
-        boundStmt.setString(i, values.get(vars.getName(i)).toString());
-      }
-
-      session.execute(boundStmt);
-
       return Status.OK;
     } catch (Exception e) {
+      e.printStackTrace();
       logger.error(MessageFormatter.format("Error inserting key: {}", key).getMessage(), e);
     }
 
     return Status.ERROR;
+  }
+
+
+  private Insert getInsert(String table, StoreTupe storeTupe) {
+    Insert insertStmt = QueryBuilder.insertInto(table);
+    insertStmt.value(YCSB_KEY, storeTupe.key);
+
+    for (String field : storeTupe.values.keySet()) {
+//      insertStmt.value(field, storeTupe.values.get(field).toString());
+      insertStmt.value(field, "01234567890123456789");
+    }
+    return insertStmt;
   }
 
   /**
