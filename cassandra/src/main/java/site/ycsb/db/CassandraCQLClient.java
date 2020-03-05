@@ -85,8 +85,8 @@ public class CassandraCQLClient extends DB {
   private ThreadLocal<List<String>> batchSelectKeys = ThreadLocal.withInitial(() -> new ArrayList<String>());
   private static int batchSize = 1;
 
-  private static ConsistencyLevel readConsistencyLevel = ConsistencyLevel.ONE;
-  private static ConsistencyLevel writeConsistencyLevel = ConsistencyLevel.ONE;
+  private static ConsistencyLevel readConsistencyLevel = ConsistencyLevel.LOCAL_ONE;
+  private static ConsistencyLevel writeConsistencyLevel = ConsistencyLevel.LOCAL_ONE;
 
   public static final String YCSB_KEY = "y_id";
   public static final String KEYSPACE_PROPERTY = "cassandra.keyspace";
