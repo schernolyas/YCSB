@@ -26,7 +26,8 @@ import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.ResultSetFuture;
 import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
-import com.datastax.driver.core.policies.DCAwareRoundRobinPolicy;
+import com.datastax.driver.core.policies.LoadBalancingPolicy;
+import com.datastax.driver.core.policies.RoundRobinPolicy;
 import com.datastax.driver.core.policies.TokenAwarePolicy;
 import com.datastax.driver.core.querybuilder.Insert;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
@@ -196,12 +197,12 @@ public class CassandraCQLClient extends DB {
             clusterBuilder = clusterBuilder.withSSL();
           }
           clusterBuilder = clusterBuilder
-              .withLoadBalancingPolicy(new TokenAwarePolicy(DCAwareRoundRobinPolicy.builder().build()));
+              .withLoadBalancingPolicy(buildLoadBalancingPolicy());
           cluster = clusterBuilder.build();
         } else {
           cluster = Cluster.builder()
               .withPort(Integer.valueOf(port))
-              .withLoadBalancingPolicy(new TokenAwarePolicy(DCAwareRoundRobinPolicy.builder().build()))
+              .withLoadBalancingPolicy(buildLoadBalancingPolicy())
               .addContactPoints(hosts).build();
         }
 
@@ -251,6 +252,10 @@ public class CassandraCQLClient extends DB {
         throw new DBException(e);
       }
     } // synchronized
+  }
+
+  private LoadBalancingPolicy buildLoadBalancingPolicy() {
+    return new TokenAwarePolicy(new RoundRobinPolicy());
   }
 
   /**
