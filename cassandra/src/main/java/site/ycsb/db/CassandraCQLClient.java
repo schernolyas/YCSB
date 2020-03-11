@@ -23,6 +23,7 @@ import com.datastax.driver.core.HostDistance;
 import com.datastax.driver.core.Metadata;
 import com.datastax.driver.core.PreparedStatement;
 import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.ResultSetFuture;
 import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.policies.DCAwareRoundRobinPolicy;
@@ -312,8 +313,8 @@ public class CassandraCQLClient extends DB {
           readBoundStatementThreadLocal.set(boundStatement);
         }
         boundStatement.setList("values", batchSelectKeys.get());
-        ResultSet rs = session.execute(boundStatement);
-        List<Row> rows = rs.all();
+        ResultSetFuture rs = session.executeAsync(boundStatement);
+        List<Row> rows = rs.getUninterruptibly().all();
 //        System.out.println("rs.all().size() : "+rows.size());
         if (!rows.isEmpty()) {
           Row firstRow = rows.get(0);
