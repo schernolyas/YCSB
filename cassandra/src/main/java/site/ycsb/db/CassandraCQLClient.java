@@ -25,6 +25,8 @@ import com.datastax.driver.core.PreparedStatement;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
+import com.datastax.driver.core.policies.DCAwareRoundRobinPolicy;
+import com.datastax.driver.core.policies.TokenAwarePolicy;
 import com.datastax.driver.core.querybuilder.Insert;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.core.querybuilder.Select;
@@ -192,9 +194,13 @@ public class CassandraCQLClient extends DB {
           if (useSSL) {
             clusterBuilder = clusterBuilder.withSSL();
           }
+          clusterBuilder = clusterBuilder
+              .withLoadBalancingPolicy(new TokenAwarePolicy(DCAwareRoundRobinPolicy.builder().build()));
           cluster = clusterBuilder.build();
         } else {
-          cluster = Cluster.builder().withPort(Integer.valueOf(port))
+          cluster = Cluster.builder()
+              .withPort(Integer.valueOf(port))
+              .withLoadBalancingPolicy(new TokenAwarePolicy(DCAwareRoundRobinPolicy.builder().build()))
               .addContactPoints(hosts).build();
         }
 
