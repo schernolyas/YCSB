@@ -33,7 +33,6 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -84,6 +83,7 @@ public class CassandraCQLClient extends DB {
       new AtomicReference<PreparedStatement>();
 
   private ThreadLocal<List<String>> batchSelectKeys = ThreadLocal.withInitial(() -> new ArrayList<String>());
+  private ThreadLocal<BoundStatement> readBoundStatementThreadLocal = new ThreadLocal<>();
   private static int batchSize = 1;
 
   private static ConsistencyLevel readConsistencyLevel = ConsistencyLevel.LOCAL_ONE;
@@ -297,17 +297,20 @@ public class CassandraCQLClient extends DB {
       batchSelectKeys.get().add(key);
       boolean batchReady = (batchSelectKeys.get().size() == batchSize);
       if (batchReady) {
-        Select select = QueryBuilder.select().all().from(table)
-            .where(QueryBuilder.in(YCSB_KEY, batchSelectKeys.get()))
-            .limit(batchSize);
-//        System.out.println(select.toString()+";"+batchSelectKeys.get());
-        String query = select.toString();
-        batchSelectKeys.get().clear();
-        ResultSet rs = session.execute(query);
-        Iterator<Row> iterator = rs.iterator();
-//        System.out.println(iterator.hasNext());
-        if (iterator.hasNext()) {
-          Row firstRow = iterator.next();
+        BoundStatement boundStatement = readBoundStatementThreadLocal.get();
+        if (boundStatement == null) {
+          //need to create the statement
+          boundStatement =
+              session.prepare("select * from "+table+" where ("+YCSB_KEY+" in :values) limit "+batchSize)
+              .bind();
+          readBoundStatementThreadLocal.set(boundStatement);
+        }
+        boundStatement.setList("values", batchSelectKeys.get());
+        ResultSet rs = session.execute(boundStatement);
+        List<Row> rows = rs.all();
+//        System.out.println("rs.all().size() : "+rows.size());
+        if (!rows.isEmpty()) {
+          Row firstRow = rows.get(0);
           for (ColumnDefinitions.Definition def : firstRow.getColumnDefinitions()) {
             ByteBuffer val = firstRow.getBytesUnsafe(def.getName());
             if (val != null) {
@@ -316,11 +319,11 @@ public class CassandraCQLClient extends DB {
               result.put(def.getName(), null);
             }
           }
+          batchSelectKeys.get().clear();
           return Status.OK;
         } else {
           return Status.NOT_FOUND;
         }
-//        resultRows.forEach(row -> System.out.println(row.toString()));
       } else {
         return Status.BATCHED_OK;
       }
