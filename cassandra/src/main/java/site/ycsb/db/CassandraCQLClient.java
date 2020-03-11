@@ -33,6 +33,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -299,25 +300,27 @@ public class CassandraCQLClient extends DB {
         Select select = QueryBuilder.select().all().from(table)
             .where(QueryBuilder.in(YCSB_KEY, batchSelectKeys.get()))
             .limit(batchSize);
+//        System.out.println(select.toString()+";"+batchSelectKeys.get());
+        String query = select.toString();
         batchSelectKeys.get().clear();
-        ResultSet rs = session.execute(select);
-        List<Row> resultRows = rs.all();
-        if (resultRows.isEmpty()) {
+        ResultSet rs = session.execute(query);
+        Iterator<Row> iterator = rs.iterator();
+//        System.out.println(iterator.hasNext());
+        if (iterator.hasNext()) {
+          Row firstRow = iterator.next();
+          for (ColumnDefinitions.Definition def : firstRow.getColumnDefinitions()) {
+            ByteBuffer val = firstRow.getBytesUnsafe(def.getName());
+            if (val != null) {
+              result.put(def.getName(), new ByteArrayByteIterator(val.array()));
+            } else {
+              result.put(def.getName(), null);
+            }
+          }
+          return Status.OK;
+        } else {
           return Status.NOT_FOUND;
         }
 //        resultRows.forEach(row -> System.out.println(row.toString()));
-
-        Row firstRow = resultRows.get(0);
-        for (ColumnDefinitions.Definition def : firstRow.getColumnDefinitions()) {
-          ByteBuffer val = firstRow.getBytesUnsafe(def.getName());
-          if (val != null) {
-            result.put(def.getName(), new ByteArrayByteIterator(val.array()));
-          } else {
-            result.put(def.getName(), null);
-          }
-        }
-
-        return Status.OK;
       } else {
         return Status.BATCHED_OK;
       }
